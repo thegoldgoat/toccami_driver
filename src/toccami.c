@@ -17,10 +17,6 @@ MODULE_VERSION("0.1");
 
 static int
     majorNumber; ///< Stores the device number -- determined automatically
-static char message[256] = {
-    0}; ///< Memory for the string that is passed from userspace
-static short
-    size_of_message;        ///< Used to remember the size of the string stored
 static int numberOpens = 0; ///< Counts the number of times the device is opened
 static struct class *toccamiClass =
     NULL; ///< The device-driver class struct pointer
@@ -146,6 +142,12 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len,
   return -EINVAL;
 }
 
+#define TOCCAMI_EVENT_MOVE 0
+#define TOCCAMI_EVENT_UP 1
+#define TOCCAMI_EVENT_DOWN 2
+
+#define MESSAGE_LENGTH 12
+
 /** @brief This function is called whenever the device is being written to from
  * user space i.e. data is sent to the device from the user. The data is copied
  * to the message[] array in this LKM using the sprintf() function along with
@@ -159,7 +161,30 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len,
  */
 static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
                          loff_t *offset) {
+  u16 x, y;
+  int pointerIndex, eventType;
+  char kernelBuffer[MESSAGE_LENGTH];
+
   printk(KERN_INFO "Toccami: Received %zu characters from the user\n", len);
+
+  // For now, assume a single 4 integers (16 bits) packets, or refuse
+  if (len != MESSAGE_LENGTH)
+    return -EINVAL;
+
+  // Copy the buffer from user
+  if (copy_from_user(kernelBuffer, buffer, len) != 0) {
+    return -EFAULT;
+  }
+
+  // Now parse parameters
+  x = *((u16 *)kernelBuffer);
+  y = *(u16 *)(kernelBuffer + 2);
+  pointerIndex = *(int *)(kernelBuffer + 4);
+  eventType = *(int *)(kernelBuffer + 8);
+
+  printk(KERN_INFO "toccami: x=%u; y=%u; pointerIndex = %d; eventType = %d\n",
+         x, y, pointerIndex, eventType);
+
   return len;
 }
 
