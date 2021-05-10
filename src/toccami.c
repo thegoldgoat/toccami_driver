@@ -52,7 +52,12 @@ static struct input_dev *toccamiInput;
 #define AXIS_Y_MIN 0
 #define AXIS_X_MAX 65536
 #define AXIS_Y_MAX 65536
-#define SLOTS_MAX_COUNT 10
+#define MAX_TOUCHES 10
+
+#define TEMP_RESOLUTION_X 100
+#define TEMP_RESOLUTION_Y 100
+
+#define EVENT_PER_PACKET 60
 
 /** @brief The LKM initialization function
  *  The static keyword restricts the visibility of the function to within this C
@@ -69,17 +74,40 @@ static int __init toccami_init(void) {
   if (!toccamiInput)
     return -ENOMEM;
 
-  input_set_abs_params(toccamiInput, ABS_X, AXIS_X_MIN, AXIS_X_MAX, 0, 0);
-  input_set_abs_params(toccamiInput, ABS_Y, AXIS_Y_MIN, AXIS_Y_MAX, 0, 0);
-  // input_set_abs_params(toccamiInput, ABS_PRESSURE, 0, 255, 0, 0);
-  // input_set_abs_params(toccamiInput, ABS_TOOL_WIDTH, 0, 15, 0, 0);
-
-  __set_bit(EV_ABS, toccamiInput->evbit);
-  __set_bit(EV_KEY, toccamiInput->evbit);
-  __set_bit(BTN_TOUCH, toccamiInput->keybit);
+  __clear_bit(EV_MSC, toccamiInput->evbit);
+  __clear_bit(ABS_TOOL_WIDTH, toccamiInput->absbit);
+  __clear_bit(BTN_0, toccamiInput->keybit);
+  __clear_bit(BTN_RIGHT, toccamiInput->keybit);
+  __clear_bit(BTN_MIDDLE, toccamiInput->keybit);
+  __set_bit(BTN_MOUSE, toccamiInput->keybit);
+  __set_bit(INPUT_PROP_BUTTONPAD, toccamiInput->propbit);
   __set_bit(BTN_TOOL_FINGER, toccamiInput->keybit);
 
-  __set_bit(INPUT_PROP_POINTER, toccamiInput->propbit);
+  __set_bit(EV_ABS, toccamiInput->evbit);
+
+  if (input_mt_init_slots(toccamiInput, MAX_TOUCHES,
+                          INPUT_MT_POINTER | INPUT_MT_DROP_UNUSED |
+                              INPUT_MT_TRACK)) {
+    printk(KERN_ERR "toccami: Error allocating slots\n");
+    return -ENOMEM;
+  }
+
+  input_set_abs_params(toccamiInput, ABS_X, AXIS_X_MIN, AXIS_X_MAX, 0, 0);
+  input_set_abs_params(toccamiInput, ABS_Y, AXIS_Y_MIN, AXIS_Y_MAX, 0, 0);
+
+  input_set_abs_params(toccamiInput, ABS_PRESSURE, 0, 255, 0, 0);
+  input_set_abs_params(toccamiInput, ABS_TOOL_WIDTH, 0, 15, 0, 0);
+  input_set_abs_params(toccamiInput, ABS_MT_POSITION_X, AXIS_X_MIN, AXIS_X_MAX,
+                       0, 0);
+  input_set_abs_params(toccamiInput, ABS_MT_POSITION_Y, AXIS_Y_MIN, AXIS_Y_MAX,
+                       0, 0);
+
+  input_abs_set_res(toccamiInput, ABS_X, TEMP_RESOLUTION_X);
+  input_abs_set_res(toccamiInput, ABS_Y, TEMP_RESOLUTION_Y);
+  input_abs_set_res(toccamiInput, ABS_MT_POSITION_X, TEMP_RESOLUTION_X);
+  input_abs_set_res(toccamiInput, ABS_MT_POSITION_Y, TEMP_RESOLUTION_Y);
+
+  input_set_events_per_packet(toccamiInput, EVENT_PER_PACKET);
 
   toccamiInput->name = "Toccami Driver";
   toccamiInput->phys = "toccami/input0";
@@ -221,20 +249,6 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
   y = *(u16 *)(kernelBuffer + 2);
   pointerIndex = *(int *)(kernelBuffer + 4);
   eventType = *(int *)(kernelBuffer + 8);
-
-  input_report_key(toccamiInput, BTN_TOUCH,
-                   eventType == TOCCAMI_EVENT_UP ? 0 : 1);
-
-  input_report_abs(toccamiInput, ABS_X, x);
-  input_report_abs(toccamiInput, ABS_Y, y);
-
-  // input_report_abs(toccamiInput, ABS_PRESSURE,
-  //                  eventType == TOCCAMI_EVENT_UP ? 0 : 255);
-  // input_report_abs(toccamiInput, ABS_TOOL_WIDTH,
-  //                  eventType == TOCCAMI_EVENT_UP ? 0 : 7);
-
-  input_report_key(toccamiInput, BTN_TOOL_FINGER,
-                   eventType != TOCCAMI_EVENT_UP);
 
   input_sync(toccamiInput);
 
