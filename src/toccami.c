@@ -1,44 +1,32 @@
-#include <linux/device.h> // Header to support the kernel Driver Model
-#include <linux/fs.h>     // Header for the Linux file system support
-#include <linux/init.h> // Macros used to mark up functions e.g., __init __exit
+#include <linux/device.h>
+#include <linux/fs.h>
+#include <linux/init.h>
 #include <linux/input.h>
 #include <linux/input/mt.h>
-#include <linux/kernel.h>  // Contains types, macros, functions for the kernel
-#include <linux/module.h>  // Core header for loading LKMs into the kernel
-#include <linux/uaccess.h> // Required for the copy to user function
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/uaccess.h>
 
-#define DEVICE_NAME                                                            \
-  "toccamich" ///< The device will appear at /dev/ebbchar using this value
-#define CLASS_NAME                                                             \
-  "toccami" ///< The device class -- this is a character device driver
+#define DEVICE_NAME "toccamich"
+#define CLASS_NAME "toccami"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrea Somaini");
 MODULE_DESCRIPTION("Virtual Touchpad driver for Toccami");
 MODULE_VERSION("0.1");
 
-static int
-    majorNumber; ///< Stores the device number -- determined automatically
-static int numberOpens = 0; ///< Counts the number of times the device is opened
-static struct class *toccamiClass =
-    NULL; ///< The device-driver class struct pointer
-static struct device *toccamiDevice =
-    NULL; ///< The device-driver device struct pointer
+static int majorNumber;
+static int numberOpens = 0;
+static struct class *toccamiClass = NULL;
+static struct device *toccamiDevice = NULL;
 
-static DEFINE_MUTEX(ebbchar_mutex);
+static DEFINE_MUTEX(toccamiMutex);
 
-// The prototype functions for the character driver -- must come before the
-// struct definition
 static int dev_open(struct inode *, struct file *);
 static int dev_release(struct inode *, struct file *);
 static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
 
-/** @brief Devices are represented as file structure in the kernel. The
- * file_operations structure from /linux/fs.h lists the callback functions that
- * you wish to associated with your file operations using a C99 syntax
- * structure. char devices usually implement open, read, write and release calls
- */
 static struct file_operations fops = {
     .open = dev_open,
     .read = dev_read,
@@ -59,13 +47,6 @@ static struct input_dev *toccamiInput;
 
 #define EVENT_PER_PACKET 10
 
-/** @brief The LKM initialization function
- *  The static keyword restricts the visibility of the function to within this C
- * file. The __init macro means that for a built-in driver (not a LKM) the
- * function is only used at initialization time and that it can be discarded and
- * its memory freed up after that point.
- *  @return returns 0 if successful
- */
 static int __init toccami_init(void) {
 
   printk(KERN_INFO "toccami: Initializing virtual input device\n");
@@ -99,8 +80,6 @@ static int __init toccami_init(void) {
   input_set_abs_params(toccamiInput, ABS_X, AXIS_X_MIN, AXIS_X_MAX, 0, 0);
   input_set_abs_params(toccamiInput, ABS_Y, AXIS_Y_MIN, AXIS_Y_MAX, 0, 0);
 
-  input_set_abs_params(toccamiInput, ABS_PRESSURE, 0, 255, 0, 0);
-  input_set_abs_params(toccamiInput, ABS_TOOL_WIDTH, 0, 15, 0, 0);
   input_set_abs_params(toccamiInput, ABS_MT_POSITION_X, AXIS_X_MIN, AXIS_X_MAX,
                        0, 0);
   input_set_abs_params(toccamiInput, ABS_MT_POSITION_Y, AXIS_Y_MIN, AXIS_Y_MAX,
@@ -123,11 +102,8 @@ static int __init toccami_init(void) {
 
   printk(KERN_INFO "toccami: Initializing char device!\n");
 
-  mutex_init(
-      &ebbchar_mutex); /// Initialize the mutex lock dynamically at runtime
+  mutex_init(&toccamiMutex);
 
-  // Try to dynamically allocate a major number for the device -- more difficult
-  // but worth it
   majorNumber = register_chrdev(0, DEVICE_NAME, &fops);
   if (majorNumber < 0) {
     printk(KERN_ALERT "Toccami failed to register a major number\n");
@@ -136,61 +112,43 @@ static int __init toccami_init(void) {
   printk(KERN_INFO "Toccami: registered correctly with major number %d\n",
          majorNumber);
 
-  // Register the device class
   toccamiClass = class_create(THIS_MODULE, CLASS_NAME);
-  if (IS_ERR(toccamiClass)) { // Check for error and clean up if there is
+  if (IS_ERR(toccamiClass)) {
     unregister_chrdev(majorNumber, DEVICE_NAME);
     printk(KERN_ALERT "Toccami: Failed to register device class\n");
-    return PTR_ERR(toccamiClass); // Correct way to return an error on a pointer
+    return PTR_ERR(toccamiClass);
   }
   printk(KERN_INFO "Toccami: device class registered correctly\n");
 
-  // Register the device driver
   toccamiDevice = device_create(toccamiClass, NULL, MKDEV(majorNumber, 0), NULL,
                                 DEVICE_NAME);
-  if (IS_ERR(toccamiDevice)) { // Clean up if there is an error
-    class_destroy(
-        toccamiClass); // Repeated code but the alternative is goto statements
+  if (IS_ERR(toccamiDevice)) {
+    class_destroy(toccamiClass);
     unregister_chrdev(majorNumber, DEVICE_NAME);
     printk(KERN_ALERT "Toccami: Failed to create the device\n");
     return PTR_ERR(toccamiDevice);
   }
-  printk(KERN_INFO
-         "Toccami: device class created correctly\n"); // Made it! device was
-                                                       // initialized
+  printk(KERN_INFO "Toccami: device class created correctly\n");
 
   return 0;
 }
 
-/** @brief The LKM cleanup function
- *  Similar to the initialization function, it is static. The __exit macro
- * notifies that if this code is used for a built-in driver (not a LKM) that
- * this function is not required.
- */
 static void __exit toccami_exit(void) {
 
   input_unregister_device(toccamiInput);
 
-  mutex_destroy(&ebbchar_mutex);
+  mutex_destroy(&toccamiMutex);
 
-  device_destroy(toccamiClass, MKDEV(majorNumber, 0)); // remove the device
-  class_unregister(toccamiClass);              // unregister the device class
-  class_destroy(toccamiClass);                 // remove the device class
-  unregister_chrdev(majorNumber, DEVICE_NAME); // unregister the major number
+  device_destroy(toccamiClass, MKDEV(majorNumber, 0));
+  class_unregister(toccamiClass);
+  class_destroy(toccamiClass);
+  unregister_chrdev(majorNumber, DEVICE_NAME);
 
   printk(KERN_INFO "Toccami: Goodbye from the LKM!\n");
 }
 
-/** @brief The device open function that is called each time the device is
- * opened This will only increment the numberOpens counter in this case.
- *  @param inodep A pointer to an inode object (defined in linux/fs.h)
- *  @param filep A pointer to a file object (defined in linux/fs.h)
- */
 static int dev_open(struct inode *inodep, struct file *filep) {
-  /// Try to acquire the mutex (i.e., put the lock
-  /// on/down) returns 1 if successful and 0 if there
-  /// is contention
-  if (!mutex_trylock(&ebbchar_mutex)) {
+  if (!mutex_trylock(&toccamiMutex)) {
     printk(KERN_ALERT "Toccami: Device in use by another process");
     return -EBUSY;
   }
@@ -221,24 +179,13 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len,
 
 #define TOCCAMI_EVENT_LENGTH 8
 
-/** @brief This function is called whenever the device is being written to from
- * user space i.e. data is sent to the device from the user. The data is copied
- * to the message[] array in this LKM using the sprintf() function along with
- * the length of the string.
- *  @param filep A pointer to a file object
- *  @param buffer The buffer to that contains the string to write to the device
- *  @param len The length of the array of data that is being passed in the const
- * char buffer
- *  @param offset The offset if required
- *  @return Number of bytes read
- */
 static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
                          loff_t *offset) {
   unsigned int i, touchCount;
   u16 x, y, pointerIndex, eventType;
   char kernelBuffer[TOCCAMI_EVENT_LENGTH];
 
-  // For now, assume a single 4 integers (16 bits) packets, or refuse
+  // Only accept multiple of EVENT_LENGTH
   if (len % TOCCAMI_EVENT_LENGTH != 0) {
     printk(KERN_ERR "toccami: invalid message SIZE: %zu\n", len);
     return -EINVAL;
@@ -246,20 +193,20 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
 
   touchCount = len / TOCCAMI_EVENT_LENGTH;
 
-  printk(KERN_DEBUG "touchCount = %u; len = %zu\n", touchCount, len);
-
   for (i = 0; i < touchCount; i++) {
     // Copy the buffer from user
     if (copy_from_user(kernelBuffer, buffer + i * TOCCAMI_EVENT_LENGTH,
                        TOCCAMI_EVENT_LENGTH) != 0) {
       return -EFAULT;
     }
-    // Now parse parameters
+
+    // Now parse parameters of touch event
     x = *((u16 *)kernelBuffer);
     y = *(u16 *)(kernelBuffer + 2);
     pointerIndex = *(u16 *)(kernelBuffer + 4);
     eventType = *(u16 *)(kernelBuffer + 6);
 
+    // If trying to change resolution, update accordingly
     if (eventType == TOCCAMI_EVENT_CHANGE_RESOLUTION) {
       printk(KERN_DEBUG "toccami: Changing resolution");
       input_abs_set_res(toccamiInput, ABS_X, x);
@@ -276,13 +223,13 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
     if (eventType == TOCCAMI_EVENT_START || eventType == TOCCAMI_EVENT_DRAG) {
 
       input_report_key(toccamiInput, BTN_TOUCH, 1);
-
-      input_report_key(toccamiInput, BTN_TOOL_FINGER, 0);
+      input_report_key(toccamiInput, BTN_TOOL_FINGER, 1);
 
       input_mt_report_slot_state(toccamiInput, MT_TOOL_FINGER, 1);
 
       input_report_abs(toccamiInput, ABS_MT_POSITION_X, x);
       input_report_abs(toccamiInput, ABS_MT_POSITION_Y, y);
+
     } else {
       input_mt_report_slot_state(toccamiInput, MT_TOOL_FINGER, 0);
     }
@@ -301,7 +248,7 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
  */
 static int dev_release(struct inode *inodep, struct file *filep) {
   printk(KERN_INFO "Toccami: Device successfully closed\n");
-  mutex_unlock(&ebbchar_mutex);
+  mutex_unlock(&toccamiMutex);
   return 0;
 }
 
