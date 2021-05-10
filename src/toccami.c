@@ -57,7 +57,7 @@ static struct input_dev *toccamiInput;
 #define TEMP_RESOLUTION_X 100
 #define TEMP_RESOLUTION_Y 100
 
-#define EVENT_PER_PACKET 60
+#define EVENT_PER_PACKET 10
 
 /** @brief The LKM initialization function
  *  The static keyword restricts the visibility of the function to within this C
@@ -80,8 +80,12 @@ static int __init toccami_init(void) {
   __clear_bit(BTN_RIGHT, toccamiInput->keybit);
   __clear_bit(BTN_MIDDLE, toccamiInput->keybit);
   __set_bit(BTN_MOUSE, toccamiInput->keybit);
-  __set_bit(INPUT_PROP_BUTTONPAD, toccamiInput->propbit);
   __set_bit(BTN_TOOL_FINGER, toccamiInput->keybit);
+
+  __set_bit(EV_ABS, toccamiInput->evbit);
+  __set_bit(EV_KEY, toccamiInput->evbit);
+  __set_bit(BTN_TOUCH, toccamiInput->keybit);
+  __set_bit(INPUT_PROP_POINTER, toccamiInput->propbit);
 
   __set_bit(EV_ABS, toccamiInput->evbit);
 
@@ -210,11 +214,12 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len,
   return -EINVAL;
 }
 
-#define TOCCAMI_EVENT_MOVE 0
-#define TOCCAMI_EVENT_UP 1
-#define TOCCAMI_EVENT_DOWN 2
+#define TOCCAMI_EVENT_RELEASED 0
+#define TOCCAMI_EVENT_START 1
+#define TOCCAMI_EVENT_DRAG 2
+#define TOCCAMI_EVENT_CHANGE_RESOLUTION 3
 
-#define MESSAGE_LENGTH 12
+#define TOCCAMI_EVENT_LENGTH 8
 
 /** @brief This function is called whenever the device is being written to from
  * user space i.e. data is sent to the device from the user. The data is copied
@@ -229,31 +234,62 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len,
  */
 static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
                          loff_t *offset) {
-  u16 x, y;
-  int pointerIndex, eventType;
-  char kernelBuffer[MESSAGE_LENGTH];
-
-  printk(KERN_INFO "Toccami: Received %zu characters from the user\n", len);
+  unsigned int i, touchCount;
+  u16 x, y, pointerIndex, eventType;
+  char kernelBuffer[TOCCAMI_EVENT_LENGTH];
 
   // For now, assume a single 4 integers (16 bits) packets, or refuse
-  if (len != MESSAGE_LENGTH)
+  if (len % TOCCAMI_EVENT_LENGTH != 0) {
+    printk(KERN_ERR "toccami: invalid message SIZE: %zu\n", len);
     return -EINVAL;
-
-  // Copy the buffer from user
-  if (copy_from_user(kernelBuffer, buffer, len) != 0) {
-    return -EFAULT;
   }
 
-  // Now parse parameters
-  x = *((u16 *)kernelBuffer);
-  y = *(u16 *)(kernelBuffer + 2);
-  pointerIndex = *(int *)(kernelBuffer + 4);
-  eventType = *(int *)(kernelBuffer + 8);
+  touchCount = len / TOCCAMI_EVENT_LENGTH;
 
+  printk(KERN_DEBUG "touchCount = %u; len = %zu\n", touchCount, len);
+
+  for (i = 0; i < touchCount; i++) {
+    // Copy the buffer from user
+    if (copy_from_user(kernelBuffer, buffer + i * TOCCAMI_EVENT_LENGTH,
+                       TOCCAMI_EVENT_LENGTH) != 0) {
+      return -EFAULT;
+    }
+    // Now parse parameters
+    x = *((u16 *)kernelBuffer);
+    y = *(u16 *)(kernelBuffer + 2);
+    pointerIndex = *(u16 *)(kernelBuffer + 4);
+    eventType = *(u16 *)(kernelBuffer + 6);
+
+    if (eventType == TOCCAMI_EVENT_CHANGE_RESOLUTION) {
+      printk(KERN_DEBUG "toccami: Changing resolution");
+      input_abs_set_res(toccamiInput, ABS_X, x);
+      input_abs_set_res(toccamiInput, ABS_Y, y);
+      continue;
+    }
+
+    printk(KERN_DEBUG "x=%u, y=%u, pointer=%u, evType=%u\n", x, y, pointerIndex,
+           eventType);
+
+    input_mt_slot(toccamiInput,
+                  input_mt_get_slot_by_key(toccamiInput, pointerIndex));
+
+    if (eventType == TOCCAMI_EVENT_START || eventType == TOCCAMI_EVENT_DRAG) {
+
+      input_report_key(toccamiInput, BTN_TOUCH, 1);
+
+      input_report_key(toccamiInput, BTN_TOOL_FINGER, 0);
+
+      input_mt_report_slot_state(toccamiInput, MT_TOOL_FINGER, 1);
+
+      input_report_abs(toccamiInput, ABS_MT_POSITION_X, x);
+      input_report_abs(toccamiInput, ABS_MT_POSITION_Y, y);
+    } else {
+      input_mt_report_slot_state(toccamiInput, MT_TOOL_FINGER, 0);
+    }
+  }
+
+  input_mt_sync_frame(toccamiInput);
   input_sync(toccamiInput);
-
-  printk(KERN_INFO "toccami: x=%u; y=%u; pointerIndex = %d; eventType = %d\n",
-         x, y, pointerIndex, eventType);
 
   return len;
 }
