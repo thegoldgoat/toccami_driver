@@ -1,6 +1,8 @@
 #include <linux/device.h> // Header to support the kernel Driver Model
 #include <linux/fs.h>     // Header for the Linux file system support
 #include <linux/init.h> // Macros used to mark up functions e.g., __init __exit
+#include <linux/input.h>
+#include <linux/input/mt.h>
 #include <linux/kernel.h>  // Contains types, macros, functions for the kernel
 #include <linux/module.h>  // Core header for loading LKMs into the kernel
 #include <linux/uaccess.h> // Required for the copy to user function
@@ -44,6 +46,14 @@ static struct file_operations fops = {
     .release = dev_release,
 };
 
+static struct input_dev *toccamiInput;
+
+#define AXIS_X_MIN 0
+#define AXIS_Y_MIN 0
+#define AXIS_X_MAX 65536
+#define AXIS_Y_MAX 65536
+#define SLOTS_MAX_COUNT 10
+
 /** @brief The LKM initialization function
  *  The static keyword restricts the visibility of the function to within this C
  * file. The __init macro means that for a built-in driver (not a LKM) the
@@ -52,6 +62,33 @@ static struct file_operations fops = {
  *  @return returns 0 if successful
  */
 static int __init toccami_init(void) {
+
+  printk(KERN_INFO "toccami: Initializing virtual input device\n");
+
+  toccamiInput = input_allocate_device();
+  if (!toccamiInput)
+    return -ENOMEM;
+
+  input_set_abs_params(toccamiInput, ABS_X, AXIS_X_MIN, AXIS_X_MAX, 0, 0);
+  input_set_abs_params(toccamiInput, ABS_Y, AXIS_Y_MIN, AXIS_Y_MAX, 0, 0);
+  // input_set_abs_params(toccamiInput, ABS_PRESSURE, 0, 255, 0, 0);
+  // input_set_abs_params(toccamiInput, ABS_TOOL_WIDTH, 0, 15, 0, 0);
+
+  __set_bit(EV_ABS, toccamiInput->evbit);
+  __set_bit(EV_KEY, toccamiInput->evbit);
+  __set_bit(BTN_TOUCH, toccamiInput->keybit);
+  __set_bit(BTN_TOOL_FINGER, toccamiInput->keybit);
+
+  __set_bit(INPUT_PROP_POINTER, toccamiInput->propbit);
+
+  toccamiInput->name = "Toccami Driver";
+  toccamiInput->phys = "toccami/input0";
+
+  if (input_register_device(toccamiInput)) {
+    input_free_device(toccamiInput);
+    return -EINVAL;
+  }
+
   printk(KERN_INFO "toccami: Initializing char device!\n");
 
   mutex_init(
@@ -99,6 +136,9 @@ static int __init toccami_init(void) {
  * this function is not required.
  */
 static void __exit toccami_exit(void) {
+
+  input_unregister_device(toccamiInput);
+
   mutex_destroy(&ebbchar_mutex);
 
   device_destroy(toccamiClass, MKDEV(majorNumber, 0)); // remove the device
@@ -181,6 +221,22 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
   y = *(u16 *)(kernelBuffer + 2);
   pointerIndex = *(int *)(kernelBuffer + 4);
   eventType = *(int *)(kernelBuffer + 8);
+
+  input_report_key(toccamiInput, BTN_TOUCH,
+                   eventType == TOCCAMI_EVENT_UP ? 0 : 1);
+
+  input_report_abs(toccamiInput, ABS_X, x);
+  input_report_abs(toccamiInput, ABS_Y, y);
+
+  // input_report_abs(toccamiInput, ABS_PRESSURE,
+  //                  eventType == TOCCAMI_EVENT_UP ? 0 : 255);
+  // input_report_abs(toccamiInput, ABS_TOOL_WIDTH,
+  //                  eventType == TOCCAMI_EVENT_UP ? 0 : 7);
+
+  input_report_key(toccamiInput, BTN_TOOL_FINGER,
+                   eventType != TOCCAMI_EVENT_UP);
+
+  input_sync(toccamiInput);
 
   printk(KERN_INFO "toccami: x=%u; y=%u; pointerIndex = %d; eventType = %d\n",
          x, y, pointerIndex, eventType);
