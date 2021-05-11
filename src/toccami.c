@@ -13,7 +13,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Andrea Somaini");
 MODULE_DESCRIPTION("Virtual Touchpad driver for Toccami");
-MODULE_VERSION("0.1");
+MODULE_VERSION("1.0");
 
 static int majorNumber;
 static int numberOpens = 0;
@@ -38,18 +38,18 @@ static struct input_dev *toccamiInput;
 
 #define AXIS_X_MIN 0
 #define AXIS_Y_MIN 0
-#define AXIS_X_MAX 65536
-#define AXIS_Y_MAX 65536
+#define AXIS_X_MAX 1000
+#define AXIS_Y_MAX 400
 #define MAX_TOUCHES 10
 
-#define TEMP_RESOLUTION_X 100
-#define TEMP_RESOLUTION_Y 100
+#define TEMP_RESOLUTION_X 10
+#define TEMP_RESOLUTION_Y 10
 
 #define EVENT_PER_PACKET 10
 
 static int __init toccami_init(void) {
 
-  printk(KERN_INFO "toccami: Initializing virtual input device\n");
+  printk(KERN_INFO "toccami: Starting init procedure\n");
 
   toccamiInput = input_allocate_device();
   if (!toccamiInput)
@@ -100,8 +100,6 @@ static int __init toccami_init(void) {
     return -EINVAL;
   }
 
-  printk(KERN_INFO "toccami: Initializing char device!\n");
-
   mutex_init(&toccamiMutex);
 
   majorNumber = register_chrdev(0, DEVICE_NAME, &fops);
@@ -109,8 +107,6 @@ static int __init toccami_init(void) {
     printk(KERN_ALERT "Toccami failed to register a major number\n");
     return majorNumber;
   }
-  printk(KERN_INFO "Toccami: registered correctly with major number %d\n",
-         majorNumber);
 
   toccamiClass = class_create(THIS_MODULE, CLASS_NAME);
   if (IS_ERR(toccamiClass)) {
@@ -118,7 +114,6 @@ static int __init toccami_init(void) {
     printk(KERN_ALERT "Toccami: Failed to register device class\n");
     return PTR_ERR(toccamiClass);
   }
-  printk(KERN_INFO "Toccami: device class registered correctly\n");
 
   toccamiDevice = device_create(toccamiClass, NULL, MKDEV(majorNumber, 0), NULL,
                                 DEVICE_NAME);
@@ -128,7 +123,8 @@ static int __init toccami_init(void) {
     printk(KERN_ALERT "Toccami: Failed to create the device\n");
     return PTR_ERR(toccamiDevice);
   }
-  printk(KERN_INFO "Toccami: device class created correctly\n");
+
+  printk(KERN_INFO "toccami: Successful init procedure, ready to use\n");
 
   return 0;
 }
@@ -208,14 +204,25 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
 
     // If trying to change resolution, update accordingly
     if (eventType == TOCCAMI_EVENT_CHANGE_RESOLUTION) {
-      printk(KERN_DEBUG "toccami: Changing resolution");
-      input_abs_set_res(toccamiInput, ABS_X, x);
-      input_abs_set_res(toccamiInput, ABS_Y, y);
+      printk(KERN_DEBUG
+             "toccami: Changing resolution: Width=%u; Height=%u; RES=%u\n",
+             x, y, pointerIndex);
+      input_abs_set_min(toccamiInput, ABS_X, 0);
+      input_abs_set_min(toccamiInput, ABS_Y, 0);
+      input_abs_set_max(toccamiInput, ABS_X, x);
+      input_abs_set_max(toccamiInput, ABS_Y, y);
+
+      // The driver relies on pointerIndex to communicate the resolution
+      input_abs_set_res(toccamiInput, ABS_X, pointerIndex);
+      input_abs_set_res(toccamiInput, ABS_Y, pointerIndex);
+
       continue;
     }
 
-    printk(KERN_DEBUG "x=%u, y=%u, pointer=%u, evType=%u\n", x, y, pointerIndex,
-           eventType);
+    // Debug information: Bad performance
+    // printk(KERN_DEBUG "x=%u, y=%u, pointer=%u, evType=%u\n", x, y,
+    // pointerIndex,
+    //        eventType);
 
     input_mt_slot(toccamiInput,
                   input_mt_get_slot_by_key(toccamiInput, pointerIndex));
