@@ -47,6 +47,12 @@ static struct input_dev *toccamiInput;
 
 #define EVENT_PER_PACKET 10
 
+static int toccami_device_777_permission(struct device *dev,
+                                         struct kobj_uevent_env *env) {
+  add_uevent_var(env, "DEVMODE=%#o", 0777);
+  return 0;
+}
+
 static int __init toccami_init(void) {
 
   printk(KERN_INFO "toccami: Starting init procedure\n");
@@ -109,6 +115,7 @@ static int __init toccami_init(void) {
   }
 
   toccamiClass = class_create(THIS_MODULE, CLASS_NAME);
+  toccamiClass->dev_uevent = toccami_device_777_permission;
   if (IS_ERR(toccamiClass)) {
     unregister_chrdev(majorNumber, DEVICE_NAME);
     printk(KERN_ALERT "Toccami: Failed to register device class\n");
