@@ -236,9 +236,6 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
 
     if (eventType == TOCCAMI_EVENT_START || eventType == TOCCAMI_EVENT_DRAG) {
 
-      input_report_key(toccamiInput, BTN_TOUCH, 1);
-      input_report_key(toccamiInput, BTN_TOOL_FINGER, 1);
-
       input_mt_report_slot_state(toccamiInput, MT_TOOL_FINGER, 1);
 
       input_report_abs(toccamiInput, ABS_MT_POSITION_X, x);
