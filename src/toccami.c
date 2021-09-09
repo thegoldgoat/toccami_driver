@@ -176,9 +176,8 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len,
 }
 
 #define TOCCAMI_EVENT_RELEASED 0
-#define TOCCAMI_EVENT_START 1
-#define TOCCAMI_EVENT_DRAG 2
-#define TOCCAMI_EVENT_CHANGE_RESOLUTION 3
+#define TOCCAMI_EVENT_DOWN 1
+#define TOCCAMI_EVENT_CHANGE_RESOLUTION 2
 
 #define TOCCAMI_EVENT_LENGTH 8
 
@@ -234,7 +233,7 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len,
     input_mt_slot(toccamiInput,
                   input_mt_get_slot_by_key(toccamiInput, pointerIndex));
 
-    if (eventType == TOCCAMI_EVENT_START || eventType == TOCCAMI_EVENT_DRAG) {
+    if (eventType == TOCCAMI_EVENT_DOWN) {
 
       input_mt_report_slot_state(toccamiInput, MT_TOOL_FINGER, 1);
 
